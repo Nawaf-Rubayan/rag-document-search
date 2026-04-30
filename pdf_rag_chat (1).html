@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF RAG Chat</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Lato:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#08090d;--s1:#0f1117;--s2:#161b26;--s3:#1e2535;
+  --border:#252d42;--border2:#2e3a55;
+  --accent:#5b8dee;--accent2:#9b6dff;--accentg:linear-gradient(135deg,#5b8dee,#9b6dff);
+  --green:#2dd4a0;--amber:#f0a500;--red:#ff5e5e;
+  --text:#dde4f5;--muted:#5a6a8a;--muted2:#7a8aaa;
+  --r:10px;
+}
+html,body{height:100%;font-family:'Lato',sans-serif;background:var(--bg);color:var(--text);overflow:hidden;}
+
+/* ═══ LAYOUT ═══ */
+#shell{display:flex;height:100vh;overflow:hidden;}
+
+/* ═══ SIDEBAR ═══ */
+#sidebar{
+  width:300px;min-width:300px;background:var(--s1);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;transition:width .25s ease,min-width .25s ease;
+  position:relative;z-index:10;
+}
+#sidebar.collapsed{width:52px;min-width:52px;}
+#sidebar.collapsed .hide-on-collapse{opacity:0;pointer-events:none;width:0;overflow:hidden;}
+#sidebar.collapsed #sidebarTitle{opacity:0;}
+
+#sidebarHeader{
+  height:54px;display:flex;align-items:center;gap:10px;padding:0 14px;
+  border-bottom:1px solid var(--border);flex-shrink:0;
+}
+#sidebarTitle{font-family:'Syne',sans-serif;font-size:15px;font-weight:700;color:var(--accent);letter-spacing:.5px;white-space:nowrap;transition:opacity .2s;}
+#collapseBtn{
+  margin-left:auto;width:28px;height:28px;border-radius:7px;border:1px solid var(--border);
+  background:var(--s2);color:var(--muted2);cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:14px;flex-shrink:0;transition:border-color .15s,color .15s;
+}
+#collapseBtn:hover{border-color:var(--accent);color:var(--accent);}
+
+#sidebarBody{flex:1;overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:16px;}
+#sidebarBody::-webkit-scrollbar{width:4px;}
+#sidebarBody::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+
+.section-head{
+  font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:500;letter-spacing:1.5px;
+  color:var(--muted);text-transform:uppercase;margin-bottom:8px;padding-left:2px;
+}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:10px;}
+.field label{font-size:11px;color:var(--muted2);font-family:'JetBrains Mono',monospace;}
+
+.inp,.sel{
+  width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);
+  border-radius:7px;padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;
+  transition:border-color .2s;
+}
+.inp:focus,.sel:focus{border-color:var(--accent);}
+.inp::placeholder{color:var(--muted);}
+.sel{cursor:pointer;appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235a6a8a'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;padding-right:26px;
+}
+.sel option{background:#1e2535;color:var(--text);}
+
+.key-wrap{position:relative;display:flex;align-items:center;}
+.key-wrap .inp{padding-right:34px;}
+.eye-btn{position:absolute;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px;}
+.eye-btn:hover{color:var(--text);}
+
+.badge-row{display:flex;align-items:center;gap:6px;margin-top:3px;}
+.badge{font-size:10px;font-family:'JetBrains Mono',monospace;padding:2px 8px;border-radius:20px;border:1px solid;white-space:nowrap;}
+.b-openai{color:#10a37f;border-color:#10a37f;background:#041a10;}
+.b-claude{color:#d97757;border-color:#d97757;background:#1c0c06;}
+.b-gemini{color:#4f90f0;border-color:#4f90f0;background:#040f22;}
+.b-ollama{color:#a78bfa;border-color:#a78bfa;background:#0e0818;}
+.b-idb   {color:#f0a500;border-color:#f0a500;background:#1a1000;}
+.b-mem   {color:#2dd4a0;border-color:#2dd4a0;background:#041a10;}
+
+.divider{height:1px;background:var(--border);margin:4px 0;}
+
+/* PDF upload zone */
+#dropZone{
+  border:1.5px dashed var(--border2);border-radius:var(--r);padding:16px 12px;text-align:center;
+  cursor:pointer;transition:border-color .2s,background .2s;display:flex;flex-direction:column;align-items:center;gap:6px;
+}
+#dropZone:hover,#dropZone.drag{border-color:var(--accent);background:#0e1520;}
+#dropZone .dz-icon{font-size:26px;opacity:.5;}
+#dropZone .dz-text{font-size:12px;color:var(--muted2);}
+#dropZone .dz-sub{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;}
+#fileInput{display:none;}
+
+.action-btn{
+  width:100%;padding:9px 14px;border-radius:8px;border:none;font-family:'Syne',sans-serif;font-size:13px;font-weight:600;
+  cursor:pointer;transition:opacity .2s,transform .1s;display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.action-btn.primary{background:var(--accentg);color:#fff;}
+.action-btn.primary:hover:not(:disabled){opacity:.85;transform:translateY(-1px);}
+.action-btn.primary:disabled{opacity:.3;cursor:not-allowed;transform:none;}
+.action-btn.ghost{background:var(--s2);border:1px solid var(--border);color:var(--text);}
+.action-btn.ghost:hover{border-color:var(--accent);}
+
+#indexStatus{
+  font-size:11px;font-family:'JetBrains Mono',monospace;padding:7px 10px;border-radius:7px;
+  background:var(--s2);border:1px solid var(--border);color:var(--muted2);text-align:center;line-height:1.5;
+}
+#indexStatus.ok{color:var(--green);border-color:var(--green);background:#041a10;}
+#indexStatus.err{color:var(--red);border-color:var(--red);background:#1a0404;}
+#indexStatus.busy{color:var(--amber);border-color:var(--amber);background:#1a1000;}
+
+#progressOuter{height:3px;background:var(--border);border-radius:2px;overflow:hidden;display:none;}
+#progressOuter.show{display:block;}
+#progressFill{height:100%;background:var(--accentg);border-radius:2px;transition:width .3s;width:0%;}
+
+/* ═══ MAIN ═══ */
+#main{flex:1;display:flex;overflow:hidden;}
+
+/* ═══ PDF PANEL ═══ */
+#pdfPanel{width:50%;border-right:1px solid var(--border);display:flex;flex-direction:column;background:#07080c;}
+#pdfNav{
+  height:46px;background:var(--s1);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;gap:10px;flex-shrink:0;
+}
+.nav-btn{
+  width:28px;height:28px;background:var(--s2);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;
+  transition:border-color .15s;
+}
+.nav-btn:hover:not(:disabled){border-color:var(--accent);}
+.nav-btn:disabled{opacity:.3;cursor:not-allowed;}
+#pageInfo{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted2);min-width:80px;text-align:center;}
+#pageJump{
+  width:48px;background:var(--bg);border:1px solid var(--border);color:var(--text);
+  border-radius:5px;padding:3px 6px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;outline:none;
+}
+#pageJump:focus{border-color:var(--accent);}
+#pdfViewport{flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:20px;}
+#pdfViewport::-webkit-scrollbar{width:5px;}
+#pdfViewport::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+#pdfCanvas{border-radius:5px;box-shadow:0 4px 40px rgba(0,0,0,.7);max-width:100%;transition:box-shadow .4s;}
+#pdfEmpty{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;
+  color:var(--muted);gap:14px;text-align:center;padding:40px;
+}
+#pdfEmpty .ei{font-size:48px;opacity:.2;}
+#pdfEmpty p{font-size:13px;line-height:1.7;max-width:220px;}
+
+/* ═══ CHAT PANEL ═══ */
+#chatPanel{flex:1;display:flex;flex-direction:column;background:var(--bg);}
+#messages{flex:1;overflow-y:auto;padding:18px 16px;display:flex;flex-direction:column;gap:14px;}
+#messages::-webkit-scrollbar{width:5px;}
+#messages::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+
+.msg{display:flex;flex-direction:column;gap:7px;max-width:93%;}
+.msg.user{align-self:flex-end;align-items:flex-end;}
+.msg.assistant{align-self:flex-start;align-items:flex-start;}
+.bubble{padding:11px 14px;border-radius:13px;font-size:13.5px;line-height:1.7;}
+.msg.user .bubble{background:linear-gradient(135deg,#162d5c,#231850);border:1px solid #263e7a;border-bottom-right-radius:4px;}
+.msg.assistant .bubble{background:var(--s1);border:1px solid var(--border);border-bottom-left-radius:4px;}
+.model-tag{font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;padding-left:2px;}
+
+.chips{display:flex;flex-wrap:wrap;gap:5px;}
+.chip{
+  background:var(--s2);border:1px solid var(--accent);color:var(--accent);
+  border-radius:5px;padding:3px 9px;font-size:10px;font-family:'JetBrains Mono',monospace;
+  cursor:pointer;transition:background .15s,transform .1s;display:flex;align-items:center;gap:4px;
+}
+.chip:hover{background:#162540;transform:translateY(-1px);}
+.chip::before{content:'↗';font-size:9px;}
+
+.thinking{display:flex;gap:5px;align-items:center;padding:11px 14px;}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:bob 1.3s infinite;}
+.dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
+@keyframes bob{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-7px)}}
+
+#chatEmpty{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:var(--muted);gap:12px;text-align:center;padding:40px;
+}
+#chatEmpty .ci{font-size:38px;opacity:.2;}
+#chatEmpty p{font-size:13px;max-width:240px;line-height:1.7;}
+
+#inputBar{
+  border-top:1px solid var(--border);padding:12px 14px;display:flex;gap:9px;align-items:flex-end;
+  background:var(--s1);
+}
+#qInput{
+  flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
+  border-radius:9px;padding:10px 13px;font-family:'Lato',sans-serif;font-size:13.5px;outline:none;
+  resize:none;min-height:42px;max-height:120px;line-height:1.55;transition:border-color .2s;
+}
+#qInput:focus{border-color:var(--accent);}
+#qInput::placeholder{color:var(--muted);}
+#qInput:disabled{opacity:.4;}
+#sendBtn{
+  background:var(--accentg);border:none;color:#fff;width:42px;height:42px;
+  border-radius:9px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;
+  transition:opacity .2s,transform .1s;flex-shrink:0;
+}
+#sendBtn:hover:not(:disabled){opacity:.82;transform:translateY(-1px);}
+#sendBtn:disabled{opacity:.3;cursor:not-allowed;transform:none;}
+</style>
+</head>
+<body>
+<div id="shell">
+
+<!-- ═══ SIDEBAR ═══ -->
+<div id="sidebar">
+  <div id="sidebarHeader">
+    <span id="sidebarTitle">⬡ PDF·RAG</span>
+    <button id="collapseBtn" onclick="toggleSidebar()" title="Collapse">◀</button>
+  </div>
+
+  <div id="sidebarBody">
+
+    <!-- AI PROVIDER -->
+    <div>
+      <div class="section-head hide-on-collapse">AI Provider</div>
+      <div class="field hide-on-collapse">
+        <label>Provider</label>
+        <select class="sel" id="providerSel" onchange="onProviderChange()">
+          <option value="openai">🟢 OpenAI</option>
+          <option value="claude">🟠 Claude (Anthropic)</option>
+          <option value="gemini">🔵 Google Gemini</option>
+          <option value="ollama">🟣 Ollama (Local)</option>
+        </select>
+      </div>
+
+      <!-- API Keys per provider -->
+      <div class="field hide-on-collapse" id="openaiKeyField">
+        <label>OpenAI API Key</label>
+        <div class="key-wrap">
+          <input class="inp" type="password" id="openaiKey" placeholder="sk-..." oninput="saveSettings()" />
+          <button class="eye-btn" onclick="toggleKey('openaiKey')">👁</button>
+        </div>
+      </div>
+      <div class="field hide-on-collapse" id="claudeKeyField" style="display:none;">
+        <label>Anthropic API Key</label>
+        <div class="key-wrap">
+          <input class="inp" type="password" id="claudeKey" placeholder="sk-ant-..." oninput="saveSettings()" />
+          <button class="eye-btn" onclick="toggleKey('claudeKey')">👁</button>
+        </div>
+        <div class="field" style="margin-top:6px;margin-bottom:0;">
+          <label>OpenAI Key (for embeddings)</label>
+          <div class="key-wrap">
+            <input class="inp" type="password" id="claudeEmbedKey" placeholder="sk-..." oninput="saveSettings()" />
+            <button class="eye-btn" onclick="toggleKey('claudeEmbedKey')">👁</button>
+          </div>
+        </div>
+      </div>
+      <div class="field hide-on-collapse" id="geminiKeyField" style="display:none;">
+        <label>Gemini API Key</label>
+        <div class="key-wrap">
+          <input class="inp" type="password" id="geminiKey" placeholder="AIza..." oninput="saveSettings()" />
+          <button class="eye-btn" onclick="toggleKey('geminiKey')">👁</button>
+        </div>
+      </div>
+      <div class="field hide-on-collapse" id="ollamaUrlField" style="display:none;">
+        <label>Ollama Base URL</label>
+        <input class="inp" type="text" id="ollamaUrl" value="http://localhost:11434" oninput="saveSettings()" />
+      </div>
+    </div>
+
+    <div class="divider hide-on-collapse"></div>
+
+    <!-- CHAT MODEL -->
+    <div>
+      <div class="section-head hide-on-collapse">Chat Model</div>
+      <div class="field hide-on-collapse">
+        <select class="sel" id="chatModelSel" onchange="saveSettings()"></select>
+        <div class="badge-row"><span id="chatBadge" class="badge b-openai">OpenAI</span></div>
+      </div>
+    </div>
+
+    <div class="divider hide-on-collapse"></div>
+
+    <!-- EMBEDDING -->
+    <div>
+      <div class="section-head hide-on-collapse">Embedding Model</div>
+      <div class="field hide-on-collapse">
+        <select class="sel" id="embedModelSel" onchange="saveSettings()"></select>
+        <div class="badge-row"><span id="embedBadge" class="badge b-openai">OpenAI</span></div>
+      </div>
+      <p class="hide-on-collapse" style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.5;" id="embedNote"></p>
+    </div>
+
+    <div class="divider hide-on-collapse"></div>
+
+    <!-- VECTOR DB -->
+    <div>
+      <div class="section-head hide-on-collapse">Vector Store</div>
+      <div class="field hide-on-collapse">
+        <select class="sel" id="vectorDbSel" onchange="saveSettings()">
+          <option value="idb">💾 IndexedDB — Persistent (survives refresh)</option>
+          <option value="mem">⚡ In-Memory — Fast (lost on refresh)</option>
+        </select>
+        <div class="badge-row" id="vdbBadgeRow">
+          <span class="badge b-idb">Persistent</span>
+          <span style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;" id="vdbNote">Embeddings saved to browser storage</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider hide-on-collapse"></div>
+
+    <!-- PDF UPLOAD -->
+    <div>
+      <div class="section-head hide-on-collapse">Document</div>
+      <div id="dropZone" class="hide-on-collapse" onclick="document.getElementById('fileInput').click()"
+           ondragover="event.preventDefault();this.classList.add('drag')"
+           ondragleave="this.classList.remove('drag')"
+           ondrop="onDrop(event)">
+        <div class="dz-icon">📄</div>
+        <div class="dz-text" id="dzText">Click or drag to upload PDF</div>
+        <div class="dz-sub" id="dzSub">Saved to browser storage</div>
+      </div>
+      <input type="file" id="fileInput" accept=".pdf" onchange="onFileSelected(event)" />
+    </div>
+
+    <button class="action-btn primary hide-on-collapse" id="indexBtn" onclick="indexPDF()" disabled style="margin-top:4px;">
+      ⚡ Index PDF
+    </button>
+    <div id="progressOuter" class="hide-on-collapse"><div id="progressFill"></div></div>
+    <div id="indexStatus" class="hide-on-collapse">No document indexed</div>
+
+    <button class="action-btn ghost hide-on-collapse" id="clearBtn" onclick="clearAll()" style="margin-top:4px;font-size:12px;padding:7px;">
+      🗑 Clear Stored Data
+    </button>
+
+  </div><!-- /sidebarBody -->
+</div><!-- /sidebar -->
+
+<!-- ═══ MAIN ═══ -->
+<div id="main">
+
+  <!-- PDF VIEWER -->
+  <div id="pdfPanel">
+    <div id="pdfNav">
+      <button class="nav-btn" id="prevBtn" onclick="changePage(-1)" disabled>‹</button>
+      <span id="pageInfo">— / —</span>
+      <button class="nav-btn" id="nextBtn" onclick="changePage(1)" disabled>›</button>
+      <input id="pageJump" type="number" min="1" placeholder="pg" title="Press Enter to jump" onkeydown="if(event.key==='Enter')jumpToPage(+this.value)" />
+    </div>
+    <div id="pdfViewport">
+      <div id="pdfEmpty"><div class="ei">📄</div><p>Load and index a PDF from the sidebar to get started.</p></div>
+      <canvas id="pdfCanvas" style="display:none;"></canvas>
+    </div>
+  </div>
+
+  <!-- CHAT -->
+  <div id="chatPanel">
+    <div id="messages">
+      <div id="chatEmpty">
+        <div class="ci">💬</div>
+        <p>Configure your AI provider in the sidebar, index your PDF, then ask anything about it.</p>
+      </div>
+    </div>
+    <div id="inputBar">
+      <textarea id="qInput" placeholder="Ask a question about your PDF…" rows="1" disabled
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendQ()}"
+        oninput="autoResize(this)"></textarea>
+      <button id="sendBtn" onclick="sendQ()" disabled>➤</button>
+    </div>
+  </div>
+
+</div><!-- /main -->
+</div><!-- /shell -->
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+/* ═══════════════════════════════════════════════
+   PROVIDER CONFIG
+═══════════════════════════════════════════════ */
+const PROVIDERS={
+  openai:{
+    label:'OpenAI',badge:'b-openai',
+    chatModels:[
+      {id:'gpt-4o-mini',  label:'GPT-4o Mini — fast & cheap'},
+      {id:'gpt-4o',       label:'GPT-4o — smartest'},
+      {id:'gpt-4-turbo',  label:'GPT-4 Turbo'},
+      {id:'o1-mini',      label:'o1-mini — reasoning'},
+    ],
+    embedModels:[
+      {id:'text-embedding-3-small',label:'text-embedding-3-small (fast)'},
+      {id:'text-embedding-3-large',label:'text-embedding-3-large (accurate)'},
+    ],
+    embedProv:'openai',embedBadge:'b-openai',embedLabel:'OpenAI',
+  },
+  claude:{
+    label:'Claude',badge:'b-claude',
+    chatModels:[
+      {id:'claude-haiku-4-5-20251001',  label:'Claude Haiku 4.5 — fastest'},
+      {id:'claude-sonnet-4-6', label:'Claude Sonnet 4.6 — balanced'},
+      {id:'claude-opus-4-6',   label:'Claude Opus 4.6 — powerful'},
+    ],
+    embedModels:[
+      {id:'text-embedding-3-small',label:'text-embedding-3-small (OpenAI)'},
+    ],
+    embedProv:'openai',embedBadge:'b-openai',embedLabel:'OpenAI',
+    note:'⚠ Claude needs a separate OpenAI key for embeddings.',
+  },
+  gemini:{
+    label:'Gemini',badge:'b-gemini',
+    chatModels:[
+      {id:'gemini-2.0-flash',          label:'Gemini 2.0 Flash — fast'},
+      {id:'gemini-2.0-flash-thinking',  label:'Gemini 2.0 Flash Thinking'},
+      {id:'gemini-1.5-pro',            label:'Gemini 1.5 Pro'},
+    ],
+    embedModels:[
+      {id:'text-embedding-004',label:'text-embedding-004 (Gemini)'},
+    ],
+    embedProv:'gemini',embedBadge:'b-gemini',embedLabel:'Gemini',
+  },
+  ollama:{
+    label:'Ollama',badge:'b-ollama',
+    chatModels:[
+      {id:'llama3.2',    label:'Llama 3.2'},
+      {id:'llama3.1',    label:'Llama 3.1'},
+      {id:'mistral',     label:'Mistral'},
+      {id:'phi3',        label:'Phi-3'},
+      {id:'gemma3',      label:'Gemma 3'},
+      {id:'qwen2.5',     label:'Qwen 2.5'},
+      {id:'deepseek-r1', label:'DeepSeek R1'},
+    ],
+    embedModels:[
+      {id:'nomic-embed-text',  label:'nomic-embed-text'},
+      {id:'mxbai-embed-large', label:'mxbai-embed-large'},
+      {id:'all-minilm',        label:'all-minilm'},
+    ],
+    embedProv:'ollama',embedBadge:'b-ollama',embedLabel:'Ollama',
+    note:'Make sure Ollama is running. Run with --cors flag for browser access.',
+  },
+};
+
+/* ═══════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════ */
+let currentProvider='openai';
+let pdfDoc=null, pdfFile=null, currentPage=1;
+let pageTexts=[], pageEmbeddings=[];   // in-memory vectors
+let chatHistory=[];
+let isProcessing=false;
+
+/* ═══════════════════════════════════════════════
+   INDEXEDDB
+═══════════════════════════════════════════════ */
+const DB_NAME='pdfrag_v1', DB_VER=1;
+let db=null;
+
+function openDB(){
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open(DB_NAME,DB_VER);
+    req.onupgradeneeded=e=>{
+      const d=e.target.result;
+      if(!d.objectStoreNames.contains('blobs')) d.createObjectStore('blobs');
+      if(!d.objectStoreNames.contains('vectors')) d.createObjectStore('vectors');
+    };
+    req.onsuccess=e=>{db=e.target.result;res(db);};
+    req.onerror=e=>rej(e);
+  });
+}
+function idbSet(store,key,val){
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readwrite');
+    const req=tx.objectStore(store).put(val,key);
+    req.onsuccess=()=>res(); req.onerror=e=>rej(e);
+  });
+}
+function idbGet(store,key){
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readonly');
+    const req=tx.objectStore(store).get(key);
+    req.onsuccess=e=>res(e.target.result); req.onerror=e=>rej(e);
+  });
+}
+function idbDel(store,key){
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readwrite');
+    tx.objectStore(store).delete(key); tx.oncomplete=()=>res(); tx.onerror=e=>rej(e);
+  });
+}
+function idbClear(store){
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readwrite');
+    tx.objectStore(store).clear(); tx.oncomplete=()=>res(); tx.onerror=e=>rej(e);
+  });
+}
+
+/* ═══════════════════════════════════════════════
+   SETTINGS (localStorage)
+═══════════════════════════════════════════════ */
+function saveSettings(){
+  const cfg={
+    provider: document.getElementById('providerSel').value,
+    chatModel: document.getElementById('chatModelSel').value,
+    embedModel: document.getElementById('embedModelSel').value,
+    vectorDb: document.getElementById('vectorDbSel').value,
+    openaiKey: document.getElementById('openaiKey').value,
+    claudeKey: document.getElementById('claudeKey').value,
+    claudeEmbedKey: document.getElementById('claudeEmbedKey').value,
+    geminiKey: document.getElementById('geminiKey').value,
+    ollamaUrl: document.getElementById('ollamaUrl').value,
+  };
+  localStorage.setItem('pdfrag_settings', JSON.stringify(cfg));
+}
+
+function loadSettings(){
+  const raw=localStorage.getItem('pdfrag_settings');
+  if(!raw) return;
+  try{
+    const cfg=JSON.parse(raw);
+    if(cfg.provider) document.getElementById('providerSel').value=cfg.provider;
+    if(cfg.openaiKey) document.getElementById('openaiKey').value=cfg.openaiKey;
+    if(cfg.claudeKey) document.getElementById('claudeKey').value=cfg.claudeKey;
+    if(cfg.claudeEmbedKey) document.getElementById('claudeEmbedKey').value=cfg.claudeEmbedKey;
+    if(cfg.geminiKey) document.getElementById('geminiKey').value=cfg.geminiKey;
+    if(cfg.ollamaUrl) document.getElementById('ollamaUrl').value=cfg.ollamaUrl;
+    if(cfg.vectorDb) document.getElementById('vectorDbSel').value=cfg.vectorDb;
+    onProviderChange(cfg.chatModel, cfg.embedModel);
+  } catch(e){}
+}
+
+/* ═══════════════════════════════════════════════
+   PROVIDER UI
+═══════════════════════════════════════════════ */
+function onProviderChange(savedChat, savedEmbed){
+  currentProvider=document.getElementById('providerSel').value;
+  const cfg=PROVIDERS[currentProvider];
+
+  // Show/hide key fields
+  document.getElementById('openaiKeyField').style.display  = currentProvider==='openai'  ?'':'none';
+  document.getElementById('claudeKeyField').style.display  = currentProvider==='claude'  ?'':'none';
+  document.getElementById('geminiKeyField').style.display  = currentProvider==='gemini'  ?'':'none';
+  document.getElementById('ollamaUrlField').style.display  = currentProvider==='ollama'  ?'':'none';
+
+  // Chat models
+  const chatSel=document.getElementById('chatModelSel');
+  chatSel.innerHTML=cfg.chatModels.map(m=>`<option value="${m.id}">${m.label}</option>`).join('');
+  if(savedChat) chatSel.value=savedChat;
+  document.getElementById('chatBadge').className=`badge ${cfg.badge}`;
+  document.getElementById('chatBadge').textContent=cfg.label;
+
+  // Embed models
+  const embedSel=document.getElementById('embedModelSel');
+  embedSel.innerHTML=cfg.embedModels.map(m=>`<option value="${m.id}">${m.label}</option>`).join('');
+  if(savedEmbed) embedSel.value=savedEmbed;
+  document.getElementById('embedBadge').className=`badge ${cfg.embedBadge}`;
+  document.getElementById('embedBadge').textContent=cfg.embedLabel;
+  document.getElementById('embedNote').textContent=cfg.note||'';
+
+  updateVdbUI();
+  saveSettings();
+}
+
+function updateVdbUI(){
+  const v=document.getElementById('vectorDbSel').value;
+  const row=document.getElementById('vdbBadgeRow');
+  if(v==='idb'){
+    row.innerHTML=`<span class="badge b-idb">Persistent</span><span style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;">Saved to IndexedDB</span>`;
+  } else {
+    row.innerHTML=`<span class="badge b-mem">Session only</span><span style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;">Lost on refresh</span>`;
+  }
+  document.getElementById('vectorDbSel').onchange=()=>{updateVdbUI();saveSettings();};
+}
+
+/* ═══════════════════════════════════════════════
+   SIDEBAR TOGGLE
+═══════════════════════════════════════════════ */
+let sidebarOpen=true;
+function toggleSidebar(){
+  sidebarOpen=!sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('collapsed',!sidebarOpen);
+  document.getElementById('collapseBtn').textContent=sidebarOpen?'◀':'▶';
+}
+
+function toggleKey(id){
+  const el=document.getElementById(id);
+  el.type=el.type==='password'?'text':'password';
+}
+
+/* ═══════════════════════════════════════════════
+   FILE + PDF PREVIEW
+═══════════════════════════════════════════════ */
+function onDrop(e){
+  e.preventDefault();document.getElementById('dropZone').classList.remove('drag');
+  const f=e.dataTransfer.files[0]; if(f&&f.type==='application/pdf') handleFile(f);
+}
+function onFileSelected(e){ const f=e.target.files[0]; if(f) handleFile(f); }
+
+async function handleFile(file){
+  pdfFile=file;
+  document.getElementById('dzText').textContent=file.name.length>28?file.name.slice(0,26)+'…':file.name;
+  document.getElementById('dzSub').textContent=`${(file.size/1024/1024).toFixed(1)} MB`;
+  document.getElementById('indexBtn').disabled=false;
+  setStatus(`"${file.name.slice(0,20)}" ready to index`,'');
+  // Save PDF to IndexedDB
+  const ab=await file.arrayBuffer();
+  await idbSet('blobs','pdf',ab);
+  await idbSet('blobs','pdfName',file.name);
+  await loadPDFPreview(ab);
+}
+
+async function loadPDFPreview(ab){
+  pdfDoc=await pdfjsLib.getDocument({data:ab.slice(0)}).promise;
+  currentPage=1;
+  document.getElementById('pageInfo').textContent=`1 / ${pdfDoc.numPages}`;
+  document.getElementById('pageJump').max=pdfDoc.numPages;
+  document.getElementById('pdfEmpty').style.display='none';
+  document.getElementById('pdfCanvas').style.display='block';
+  document.getElementById('prevBtn').disabled=true;
+  document.getElementById('nextBtn').disabled=pdfDoc.numPages<=1;
+  await renderPage(1);
+}
+
+async function renderPage(n){
+  if(!pdfDoc) return;
+  const pg=await pdfDoc.getPage(n);
+  const vp=pg.getViewport({scale:1.5});
+  const c=document.getElementById('pdfCanvas');
+  c.width=vp.width; c.height=vp.height;
+  await pg.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+  document.getElementById('pageInfo').textContent=`${n} / ${pdfDoc.numPages}`;
+  currentPage=n;
+  document.getElementById('prevBtn').disabled=n<=1;
+  document.getElementById('nextBtn').disabled=n>=pdfDoc.numPages;
+}
+function changePage(d){const n=currentPage+d;if(n>=1&&n<=pdfDoc.numPages)renderPage(n);}
+function jumpToPage(n){if(!pdfDoc||isNaN(n))return;renderPage(Math.max(1,Math.min(n,pdfDoc.numPages)));}
+
+/* ═══════════════════════════════════════════════
+   INDEXING
+═══════════════════════════════════════════════ */
+async function indexPDF(){
+  if(isProcessing) return;
+  const provider=currentProvider;
+  const embedModel=document.getElementById('embedModelSel').value;
+  const embedProv=PROVIDERS[provider].embedProv;
+  const key=getEmbedKey();
+  const ollamaBase=document.getElementById('ollamaUrl').value.trim();
+  const vectorDb=document.getElementById('vectorDbSel').value;
+
+  if(embedProv!=='ollama'&&!key){alert('Enter your API key first.');return;}
+  if(!pdfDoc&&!pdfFile){alert('Upload a PDF first.');return;}
+
+  isProcessing=true;
+  document.getElementById('indexBtn').disabled=true;
+  setStatus('Extracting text…','busy');
+  showProg(0);
+
+  // Extract text
+  pageTexts=[];
+  let ab;
+  if(pdfFile){ ab=await pdfFile.arrayBuffer(); }
+  else { ab=await idbGet('blobs','pdf'); }
+  const pdf=await pdfjsLib.getDocument({data:ab.slice(0)}).promise;
+  const total=pdf.numPages;
+  for(let i=1;i<=total;i++){
+    const pg=await pdf.getPage(i);
+    const ct=await pg.getTextContent();
+    const tx=ct.items.map(it=>it.str).join(' ').replace(/\s+/g,' ').trim();
+    if(tx.length>30) pageTexts.push({page:i,text:tx});
+    setProg(`Extracting… ${i}/${total}`,(i/total)*40);
+  }
+
+  // Embed
+  setStatus('Embedding pages…','busy');
+  pageEmbeddings=[];
+  const bs=20;
+  for(let s=0;s<pageTexts.length;s+=bs){
+    const batch=pageTexts.slice(s,s+bs);
+    try{
+      let embs;
+      if(embedProv==='openai')      embs=await embedOpenAI(key,batch.map(p=>p.text.slice(0,2000)),embedModel);
+      else if(embedProv==='gemini') embs=await embedGemini(key,batch.map(p=>p.text.slice(0,2000)),embedModel);
+      else if(embedProv==='ollama') embs=await embedOllama(ollamaBase,batch.map(p=>p.text.slice(0,2000)),embedModel);
+      embs.forEach((e,i)=>pageEmbeddings.push({page:batch[i].page,embedding:e}));
+    } catch(err){
+      setStatus('Error: '+err.message,'err');hideProg();
+      isProcessing=false;document.getElementById('indexBtn').disabled=false;return;
+    }
+    setProg(`Embedding… ${Math.min(s+bs,pageTexts.length)}/${pageTexts.length}`,40+(Math.min(s+bs,pageTexts.length)/pageTexts.length)*60);
+  }
+
+  // Persist if IndexedDB mode
+  if(vectorDb==='idb'){
+    setStatus('Saving to IndexedDB…','busy');
+    await idbSet('vectors','pageTexts',JSON.stringify(pageTexts));
+    await idbSet('vectors','pageEmbeddings',JSON.stringify(pageEmbeddings));
+    await idbSet('vectors','embedModel',embedModel);
+    await idbSet('vectors','provider',provider);
+  }
+
+  hideProg();
+  setStatus(`✓ ${pageEmbeddings.length} pages indexed & ${vectorDb==='idb'?'saved':'ready'}`, 'ok');
+  document.getElementById('qInput').disabled=false;
+  document.getElementById('sendBtn').disabled=false;
+  document.getElementById('chatEmpty').style.display='none';
+  isProcessing=false;
+  addSysMsg(`✅ **${pageEmbeddings.length} pages** indexed with **${embedModel}**${vectorDb==='idb'?' — saved persistently':' — session only'}. Ask me anything!`);
+}
+
+function getEmbedKey(){
+  const p=currentProvider;
+  if(p==='claude') return document.getElementById('claudeEmbedKey').value.trim();
+  if(p==='gemini') return document.getElementById('geminiKey').value.trim();
+  return document.getElementById('openaiKey').value.trim();
+}
+function getChatKey(){
+  const p=currentProvider;
+  if(p==='claude') return document.getElementById('claudeKey').value.trim();
+  if(p==='gemini') return document.getElementById('geminiKey').value.trim();
+  return document.getElementById('openaiKey').value.trim();
+}
+
+/* ═══════════════════════════════════════════════
+   EMBED APIs
+═══════════════════════════════════════════════ */
+async function embedOpenAI(key,texts,model){
+  const r=await fetch('https://api.openai.com/v1/embeddings',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model,input:texts})});
+  if(!r.ok){const e=await r.json();throw new Error(e.error?.message||'OpenAI embed error');}
+  return (await r.json()).data.map(i=>i.embedding);
+}
+async function embedGemini(key,texts,model){
+  const res=[];
+  for(const t of texts){
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:`models/${model}`,content:{parts:[{text:t}]}})});
+    if(!r.ok){const e=await r.json();throw new Error(e.error?.message||'Gemini embed error');}
+    res.push((await r.json()).embedding.values);
+  }
+  return res;
+}
+async function embedOllama(base,texts,model){
+  const res=[];
+  for(const t of texts){
+    const r=await fetch(`${base}/api/embeddings`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model,prompt:t})});
+    if(!r.ok) throw new Error('Ollama embed error — is Ollama running?');
+    res.push((await r.json()).embedding);
+  }
+  return res;
+}
+
+/* ═══════════════════════════════════════════════
+   SIMILARITY + SEARCH
+═══════════════════════════════════════════════ */
+function cosineSim(a,b){let d=0,ma=0,mb=0;for(let i=0;i<a.length;i++){d+=a[i]*b[i];ma+=a[i]*a[i];mb+=b[i]*b[i];}return d/(Math.sqrt(ma)*Math.sqrt(mb));}
+
+async function getQEmbedding(q){
+  const key=getEmbedKey();
+  const base=document.getElementById('ollamaUrl').value.trim();
+  const model=document.getElementById('embedModelSel').value;
+  const ep=PROVIDERS[currentProvider].embedProv;
+  if(ep==='openai') return (await embedOpenAI(key,[q],model))[0];
+  if(ep==='gemini') return (await embedGemini(key,[q],model))[0];
+  return (await embedOllama(base,[q],model))[0];
+}
+
+function topPages(qe,k=4){
+  return pageEmbeddings.map(p=>({page:p.page,score:cosineSim(qe,p.embedding)}))
+    .sort((a,b)=>b.score-a.score).slice(0,k).map(p=>p.page);
+}
+
+/* ═══════════════════════════════════════════════
+   CHAT
+═══════════════════════════════════════════════ */
+async function sendQ(){
+  const inp=document.getElementById('qInput');
+  const q=inp.value.trim();
+  if(!q||isProcessing) return;
+  if(pageEmbeddings.length===0){alert('Index the PDF first.');return;}
+  const key=getChatKey();
+  const base=document.getElementById('ollamaUrl').value.trim();
+  const chatModel=document.getElementById('chatModelSel').value;
+  if(currentProvider!=='ollama'&&!key){alert('Enter your API key in the sidebar.');return;}
+
+  inp.value=''; inp.style.height='auto';
+  document.getElementById('sendBtn').disabled=true;
+  addUserMsg(q);
+  const tid=addThinking();
+
+  try{
+    const qe=await getQEmbedding(q);
+    const pages=topPages(qe,4);
+    const ctx=pages.map(pg=>{const pt=pageTexts.find(p=>p.page===pg);return pt?`[Page ${pg}]\n${pt.text.slice(0,1500)}`:''}).filter(Boolean).join('\n\n---\n\n');
+    const sys=`You are a helpful assistant answering questions about a PDF document. Use ONLY the provided page excerpts to answer accurately. Always end your answer with: "📄 Source pages: X, Y, Z"`;
+    const userMsg=`Context:\n\n${ctx}\n\nQuestion: ${q}`;
+    chatHistory.push({role:'user',content:userMsg});
+
+    let answer;
+    if(currentProvider==='openai')      answer=await chatOpenAI(key,chatModel,sys);
+    else if(currentProvider==='claude') answer=await chatClaude(key,chatModel,sys);
+    else if(currentProvider==='gemini') answer=await chatGemini(key,chatModel,sys);
+    else if(currentProvider==='ollama') answer=await chatOllama(base,chatModel,sys);
+
+    chatHistory.push({role:'assistant',content:answer});
+    removeThinking(tid);
+    addAssistantMsg(answer,pages,chatModel);
+  } catch(err){
+    removeThinking(tid);
+    addSysMsg(`❌ ${err.message}`);
+  }
+  document.getElementById('sendBtn').disabled=false;
+  inp.focus();
+}
+
+/* ═══════════════════════════════════════════════
+   CHAT APIs
+═══════════════════════════════════════════════ */
+async function chatOpenAI(key,model,sys){
+  const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model,messages:[{role:'system',content:sys},...chatHistory.slice(-6)],temperature:0.2,max_tokens:800})});
+  if(!r.ok){const e=await r.json();throw new Error(e.error?.message||'OpenAI error');}
+  return (await r.json()).choices[0].message.content;
+}
+async function chatClaude(key,model,sys){
+  const msgs=chatHistory.slice(-6).map(m=>({role:m.role==='assistant'?'assistant':'user',content:m.content}));
+  const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model,max_tokens:800,system:sys,messages:msgs})});
+  if(!r.ok){const e=await r.json();throw new Error(e.error?.message||'Claude error');}
+  return (await r.json()).content[0].text;
+}
+async function chatGemini(key,model,sys){
+  const contents=chatHistory.slice(-6).map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
+  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system_instruction:{parts:[{text:sys}]},contents})});
+  if(!r.ok){const e=await r.json();throw new Error(e.error?.message||'Gemini error');}
+  return (await r.json()).candidates[0].content.parts[0].text;
+}
+async function chatOllama(base,model,sys){
+  const r=await fetch(`${base}/api/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model,messages:[{role:'system',content:sys},...chatHistory.slice(-6)],stream:false})});
+  if(!r.ok) throw new Error('Ollama chat error — is Ollama running?');
+  return (await r.json()).message.content;
+}
+
+/* ═══════════════════════════════════════════════
+   MESSAGE UI
+═══════════════════════════════════════════════ */
+function addUserMsg(t){
+  const m=document.getElementById('messages');
+  const d=document.createElement('div');d.className='msg user';
+  d.innerHTML=`<div class="bubble">${esc(t)}</div>`;
+  m.appendChild(d);scrollBot();
+}
+function addAssistantMsg(text,pages,model){
+  const m=document.getElementById('messages');
+  const d=document.createElement('div');d.className='msg assistant';
+  const clean=text.replace(/📄 Source pages:.*/i,'').trim();
+  const chips=pages?pages.map(pg=>`<span class="chip" onclick="goToPage(${pg})">Page ${pg}</span>`).join(''):'';
+  d.innerHTML=`
+    <span class="model-tag">${model}</span>
+    <div class="bubble">${fmt(clean)}</div>
+    ${chips?`<div class="chips">${chips}</div>`:''}
+  `;
+  m.appendChild(d);scrollBot();
+  if(pages&&pages.length) goToPage(pages[0]);
+}
+function addSysMsg(t){
+  const m=document.getElementById('messages');
+  const d=document.createElement('div');d.className='msg assistant';
+  d.innerHTML=`<div class="bubble" style="color:var(--muted2);font-size:12.5px;">${fmt(t)}</div>`;
+  m.appendChild(d);scrollBot();
+}
+let tc=0;
+function addThinking(){const id='t'+(++tc);const m=document.getElementById('messages');const d=document.createElement('div');d.className='msg assistant';d.id=id;d.innerHTML=`<div class="bubble thinking"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;m.appendChild(d);scrollBot();return id;}
+function removeThinking(id){const e=document.getElementById(id);if(e)e.remove();}
+function scrollBot(){const m=document.getElementById('messages');m.scrollTop=m.scrollHeight;}
+
+function goToPage(n){
+  if(!pdfDoc)return;
+  document.getElementById('pdfEmpty').style.display='none';
+  document.getElementById('pdfCanvas').style.display='block';
+  renderPage(n);
+  const c=document.getElementById('pdfCanvas');
+  c.style.boxShadow='0 0 0 3px var(--accent),0 4px 40px rgba(91,141,238,.35)';
+  setTimeout(()=>{c.style.boxShadow='0 4px 40px rgba(0,0,0,.7)';},1400);
+}
+
+function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function fmt(t){return esc(t).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');}
+function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,120)+'px';}
+
+/* ═══════════════════════════════════════════════
+   STATUS / PROGRESS
+═══════════════════════════════════════════════ */
+function setStatus(t,cls){
+  const el=document.getElementById('indexStatus');
+  el.textContent=t; el.className='';
+  if(cls) el.classList.add(cls);
+}
+function showProg(v){document.getElementById('progressOuter').classList.add('show');document.getElementById('progressFill').style.width=v+'%';}
+function setProg(label,v){setStatus(label,'busy');document.getElementById('progressFill').style.width=v+'%';}
+function hideProg(){document.getElementById('progressOuter').classList.remove('show');document.getElementById('progressFill').style.width='0%';}
+
+/* ═══════════════════════════════════════════════
+   CLEAR DATA
+═══════════════════════════════════════════════ */
+async function clearAll(){
+  if(!confirm('Clear all stored PDF, embeddings, and chat history?')) return;
+  await idbClear('blobs');
+  await idbClear('vectors');
+  pageTexts=[]; pageEmbeddings=[]; chatHistory=[];
+  pdfDoc=null; pdfFile=null;
+  document.getElementById('pdfEmpty').style.display='flex';
+  document.getElementById('pdfCanvas').style.display='none';
+  document.getElementById('pageInfo').textContent='— / —';
+  document.getElementById('prevBtn').disabled=true;
+  document.getElementById('nextBtn').disabled=true;
+  document.getElementById('qInput').disabled=true;
+  document.getElementById('sendBtn').disabled=true;
+  document.getElementById('indexBtn').disabled=true;
+  document.getElementById('dzText').textContent='Click or drag to upload PDF';
+  document.getElementById('dzSub').textContent='Saved to browser storage';
+  document.getElementById('messages').innerHTML='<div id="chatEmpty" class="chatEmpty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);gap:12px;text-align:center;padding:40px;"><div class="ci" style="font-size:38px;opacity:.2;">💬</div><p style="font-size:13px;max-width:240px;line-height:1.7;">Configure your AI provider in the sidebar, index your PDF, then ask anything about it.</p></div>';
+  setStatus('All data cleared','');
+}
+
+/* ═══════════════════════════════════════════════
+   RESTORE ON LOAD
+═══════════════════════════════════════════════ */
+async function restoreSession(){
+  await openDB();
+  loadSettings();
+
+  // Try to restore PDF
+  const pdfAb=await idbGet('blobs','pdf');
+  const pdfName=await idbGet('blobs','pdfName');
+  if(pdfAb){
+    document.getElementById('dzText').textContent=pdfName||'Stored PDF';
+    document.getElementById('dzSub').textContent='Loaded from browser storage';
+    document.getElementById('indexBtn').disabled=false;
+    await loadPDFPreview(pdfAb);
+    setStatus('PDF restored from storage','');
+  }
+
+  // Try to restore vectors
+  const vecDb=document.getElementById('vectorDbSel').value;
+  if(vecDb==='idb'){
+    const storedTexts=await idbGet('vectors','pageTexts');
+    const storedEmbs=await idbGet('vectors','pageEmbeddings');
+    if(storedTexts&&storedEmbs){
+      pageTexts=JSON.parse(storedTexts);
+      pageEmbeddings=JSON.parse(storedEmbs);
+      setStatus(`✓ ${pageEmbeddings.length} pages restored from IndexedDB`,'ok');
+      document.getElementById('qInput').disabled=false;
+      document.getElementById('sendBtn').disabled=false;
+      document.getElementById('chatEmpty').style.display='none';
+      addSysMsg(`✅ Session restored — **${pageEmbeddings.length} pages** loaded from storage. Ask me anything!`);
+    }
+  }
+}
+
+restoreSession();
+</script>
+</body>
+</html>
